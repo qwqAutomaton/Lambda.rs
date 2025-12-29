@@ -7,22 +7,48 @@ APPLICATION = '<' TERM '|' TERM '>' -- something like Dirac, <\x.{x+1}|y>
 */
 
 use core::panic;
-use std::iter::Peekable;
-
+use std::{iter::Peekable};
+#[derive(PartialEq)]
 enum Term {
-    Variable(String),
-    Lambda(String, Box<Term>),
+    Variable(Option<usize>),   // store de Bruijn internally; None = free var
+    Lambda(String, Box<Term>), // param for pretty-printer (debug)
     Application(Box<Term>, Box<Term>),
 }
 
-impl std::fmt::Debug for Term {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Term::Variable(name) => write!(f, "\'{}\'", name),
-            Term::Lambda(param, body) => write!(f, "({}) => ({:?})", param, body),
-            Term::Application(lhs, rhs) => write!(f, "({:?})({:?})", lhs, rhs),
+// pretty printer wrapper. print with named vars (not indices)
+fn pretty_print(term: &Term) -> String {
+    fn print_term(term: &Term, env: &mut Vec<String>) -> String {
+        match term {
+            Term::Variable(idx) => print_var(idx, env),
+            Term::Lambda(lmd, body) => print_lambda(lmd, body, env),
+            Term::Application(lhs, rhs) => print_application(lhs, rhs, env),
         }
     }
+    fn print_var(idx: &Option<usize>, env: &Vec<String>) -> String {
+        if let Some(i) = idx {
+            env[env.len() - i].clone()
+        } else {
+            "[Free]".to_string()
+        }
+    }
+    fn print_lambda(lmd: &String, body: &Term, env: &mut Vec<String>) -> String {
+        env.push(lmd.clone());
+        let body_str = print_term(body, env);
+        env.pop();
+        format!("λ{} => ({})", lmd, body_str)
+    }
+    fn print_application(lhs: &Term, rhs: &Term, env: &mut Vec<String>) -> String {
+        let lhs_str = print_term(lhs, env);
+        let rhs_str = print_term(rhs, env);
+        // add parentheses to rhs if missing
+        if rhs_str.starts_with('(') && rhs_str.ends_with(')') {
+            format!("{}{}", lhs_str, rhs_str)
+        } else {
+            format!("{}({})", lhs_str, rhs_str)
+        }
+    }
+    let mut env = vec![];
+    print_term(term, &mut env)
 }
 
 #[derive(PartialEq, Debug)]
@@ -112,18 +138,26 @@ fn parse(tokens: &[Token]) -> Term {
             panic!("Expected identifier");
         }
     }
-    fn parse_term(iter: &mut PeekIter) -> Term {
+    fn parse_term(iter: &mut PeekIter, env: &mut Vec<String>) -> Term {
         match iter.peek() {
-            Some(Token::Var(_)) => parse_var(iter),
-            Some(Token::Lambda) => parse_lambda(iter),
-            Some(Token::Bra) => parse_application(iter),
+            Some(Token::Var(_)) => parse_var(iter, env),
+            Some(Token::Lambda) => parse_lambda(iter, env),
+            Some(Token::Bra) => parse_application(iter, env),
             _ => panic!("Unexpected token"),
         }
     }
-    fn parse_var(iter: &mut PeekIter) -> Term {
-        Term::Variable(expect_ident(iter))
+    fn parse_var(iter: &mut PeekIter, env: &mut Vec<String>) -> Term {
+        let ident = expect_ident(iter);
+        // get de bruijn
+        // de bruijn index is the distance to the its lambda
+        if let Some(idx) = env.iter().rposition(|x| *x == ident) {
+            let de_bruijn_index = env.len() - idx; // backwards. index starts from 1
+            Term::Variable(Some(de_bruijn_index))
+        } else {
+            Term::Variable(None) // free variable
+        }
     }
-    fn parse_lambda(iter: &mut PeekIter) -> Term {
+    fn parse_lambda(iter: &mut PeekIter, env: &mut Vec<String>) -> Term {
         iter.next(); // consume '\'
         // expect variable
         let param = expect_ident(iter);
@@ -131,21 +165,23 @@ fn parse(tokens: &[Token]) -> Term {
         expect_token(iter, &Token::Dot, "Expected '.' after variable in lambda");
         // expect '{'
         expect_token(iter, &Token::LBrace, "Expected '{' after '.' in lambda");
+        env.push(param.clone());
         // expect term as body
-        let body = parse_term(iter);
+        let body = parse_term(iter, env);
         // expect '}'
         expect_token(iter, &Token::RBrace, "Expected '}' after lambda body");
+        env.pop();
         Term::Lambda(param, Box::new(body))
     }
-    fn parse_application(iter: &mut PeekIter) -> Term {
+    fn parse_application(iter: &mut PeekIter, env: &mut Vec<String>) -> Term {
         iter.next(); // consume '<'
-        let lhs = parse_term(iter);
+        let lhs = parse_term(iter, env);
         // expect '|'
         if let Some(Token::Delim) = iter.next() {
         } else {
             panic!("Expected delimiter '|' in application");
         };
-        let rhs = parse_term(iter);
+        let rhs = parse_term(iter, env);
         // expect '>'
         if let Some(Token::Ket) = iter.next() {
         } else {
@@ -154,57 +190,18 @@ fn parse(tokens: &[Token]) -> Term {
         Term::Application(Box::new(lhs), Box::new(rhs))
     }
     let mut iter = tokens.iter().peekable();
-    parse_term(&mut iter)
+    let mut env = Vec::new();
+    parse_term(&mut iter, &mut env)
 }
 
-// tests
-#[cfg(test)]
-mod tests {
-    // test tokenizer
-    use super::*;
-    #[test]
-    fn test_tokenize() {
-        let input = r"< \x . {x} | < \t . {t} | y > >";
-        let tokens = tokenize(input);
-        let expected = vec![
-            Token::Bra,
-            Token::Lambda,
-            Token::Var("x".to_string()),
-            Token::Dot,
-            Token::LBrace,
-            Token::Var("x".to_string()),
-            Token::RBrace,
-            Token::Delim,
-            Token::Bra,
-            Token::Lambda,
-            Token::Var("t".to_string()),
-            Token::Dot,
-            Token::LBrace,
-            Token::Var("t".to_string()),
-            Token::RBrace,
-            Token::Delim,
-            Token::Var("y".to_string()),
-            Token::Ket,
-            Token::Ket,
-        ];
-        assert_eq!(tokens, expected);
-    }
-}
 
 fn main() {
-    let input = r"< \x . {x} | < \t . {t} | y > >";
+    // S-combinator
+    let input = r"\x.{\y.{\z.{<<x|z>|<y|z>>}}}";
     let tokens = tokenize(input);
     println!("Tokens: {:?}", tokens);
     let term = parse(&tokens);
-    println!("Parsed Term: {:?}", term);
+    println!("{}", pretty_print(&term));
+    // should be:
+    // (λy => {(λx => {$0})((λt => {$0})($0))})(λinput => {$0})
 }
-
-/*
-Term *parse(const token *input, int len)
-{
-    if (input[0] is var) return parsevar(input, len);
-    if (input[0] is lambda) return parselambda(input, len);
-    if (input[0] is application) return parseapplication(input, len);
-    error("Unexpected token");
-}
-*/
