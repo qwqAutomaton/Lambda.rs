@@ -1,5 +1,7 @@
 use crate::parser::Term;
 
+const MAXLEN: usize = 10;
+
 pub struct PrettyPrinter {
     env: Vec<String>,
 }
@@ -9,42 +11,58 @@ impl PrettyPrinter {
         Self { env: Vec::new() }
     }
 
-    pub fn format(&mut self, term: &Term) -> String {
+    pub fn format(&mut self, term: &Term, free: &[String]) -> String {
         self.env.clear();
-        self.print_term(term)
+        self.print_term(term, free)
     }
 
-    fn print_term(&mut self, term: &Term) -> String {
+    fn print_term(&mut self, term: &Term, free: &[String]) -> String {
         match term {
-            Term::Variable(index) => self.print_var(index),
-            Term::Lambda(param, body) => self.print_lambda(param, body),
-            Term::Application(lhs, rhs) => self.print_application(lhs, rhs),
+            Term::Variable(index) => self.print_var(*index, free),
+            Term::Lambda(param, body) => self.print_lambda(param, body, free),
+            Term::Application(lhs, rhs) => self.print_application(lhs, rhs, free),
         }
     }
 
-    fn print_var(&self, index: &Option<usize>) -> String {
-        if let Some(depth) = index {
-            let pos = self.env.len() - depth;
-            self.env[pos].clone()
+    fn print_var(&self, index: i32, free: &[String]) -> String {
+        if index < 0 {
+            let freepos = -(index + 1) as usize;
+            format!("${}", free[freepos])
         } else {
-            "[Free]".to_string()
+            let bindpos = self.env.len() - (index as usize);
+            self.env[bindpos].clone()
         }
     }
 
-    fn print_lambda(&mut self, param: &String, body: &Term) -> String {
+    fn print_lambda(&mut self, param: &String, body: &Term, free: &[String]) -> String {
         self.env.push(param.clone());
-        let body_str = self.print_term(body);
+        let body_str = self.print_term(body, free);
         self.env.pop();
-        format!("λ{} => ({})", param, body_str)
+        let fmtbody = if body_str.len() > MAXLEN {
+            Self::addparen(&body_str)
+        } else {
+            body_str
+        };
+        format!("λ{}. {}", param, fmtbody)
     }
 
-    fn print_application(&mut self, lhs: &Term, rhs: &Term) -> String {
-        let lhs_str = self.print_term(lhs);
-        let rhs_str = self.print_term(rhs);
-        if rhs_str.starts_with('(') && rhs_str.ends_with(')') {
-            format!("{}{}", lhs_str, rhs_str)
+    fn addparen(s: &String) -> String {
+        if s.starts_with('(') && s.ends_with(')') {
+            s.clone()
         } else {
-            format!("{}({})", lhs_str, rhs_str)
+            format!("({})", s)
         }
+    }
+
+    fn print_application(&mut self, lhs: &Term, rhs: &Term, free: &[String]) -> String {
+        let lhs_str = self.print_term(lhs, free);
+        let rhs_str = self.print_term(rhs, free);
+        // add parentheses for lhs if len > MAXLEN
+        let fmtlhs = if lhs_str.len() > MAXLEN {
+            Self::addparen(&lhs_str)
+        } else {
+            lhs_str
+        };
+        format!("{}{}", fmtlhs, Self::addparen(&rhs_str))
     }
 }

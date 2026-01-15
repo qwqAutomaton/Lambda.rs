@@ -14,13 +14,13 @@ use crate::pretty_printer::PrettyPrinter;
 
 fn main() {
     // S-combinator
-    let input = r"\x.{\y.{\z.{<<x|z>|<y|z>>}}}";
+    let input = r"<\t.{<\x.{\y.{\z.{<<x|z>|<y|z>>}}}|t>}|SOME_FUCKING_FREE>";
     let tokens = tokenizer::tokenize(input);
     let mut parser = parser::Parser::new(&tokens);
     println!("Tokens: {:?}", tokens);
-    let term = parser.parse();
+    let (term, free) = parser.parse();
     let mut printer = PrettyPrinter::new();
-    println!("{}", printer.format(&term));
+    println!("{}", printer.format(&term, &free));
     // should be:
     // (λy => {(λx => {$0})((λt => {$0})($0))})(λinput => {$0})
 }

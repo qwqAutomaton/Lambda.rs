@@ -4,7 +4,7 @@ use crate::tokenizer::Token;
 
 #[derive(PartialEq)]
 pub enum Term {
-    Variable(Option<usize>),
+    Variable(i32), // negative for free variable
     Lambda(String, Box<Term>),
     Application(Box<Term>, Box<Term>),
 }
@@ -12,6 +12,7 @@ pub enum Term {
 pub struct Parser<'a> {
     iter: Peekable<std::slice::Iter<'a, Token>>,
     env: Vec<String>,
+    freevar: Vec<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -19,11 +20,12 @@ impl<'a> Parser<'a> {
         Self {
             iter: tokens.iter().peekable(),
             env: Vec::new(),
+            freevar: Vec::new(),
         }
     }
 
-    pub fn parse(&mut self) -> Term {
-        self.parse_term()
+    pub fn parse(&mut self) -> (Term, Vec<String>) {
+        (self.parse_term(), self.freevar.clone())
     }
 
     fn expect_token(&mut self, expected: &Token, msg: &str) {
@@ -53,9 +55,10 @@ impl<'a> Parser<'a> {
         let ident = self.expect_ident();
         if let Some(idx) = self.env.iter().rposition(|name| name == &ident) {
             let depth = self.env.len() - idx;
-            Term::Variable(Some(depth))
+            Term::Variable(depth as i32)
         } else {
-            Term::Variable(None)
+            self.freevar.push(ident.clone());
+            Term::Variable(-(self.freevar.len() as i32))
         }
     }
 
@@ -86,4 +89,3 @@ impl<'a> Parser<'a> {
         Term::Application(Box::new(lhs), Box::new(rhs))
     }
 }
-
